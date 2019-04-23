@@ -153,7 +153,7 @@
 		}
 
 		// Render DOM elements for suggestion content.
-		function renderSuggestionContent( title, copy ) {
+		function renderSuggestionContent( slug, title, copy ) {
 			var container = document.createElement( 'div' );
 
 			container.classList.add( 'marketplace-suggestion-container-content' );
@@ -168,6 +168,26 @@
 				var body = document.createElement( 'p' );
 				body.textContent = copy;
 				container.appendChild( body );
+			}
+
+			// Conditionally add in a Manage suggestions link to product edit
+			// metabox footer (based on suggestion slug).
+			var slugsWithManage = [
+				'product-edit-empty-footer-browse-all',
+				'product-edit-meta-tab-footer-browse-all'
+			];
+			if ( -1 !== slugsWithManage.indexOf( slug ) ) {
+				container.classList.add( 'has-manage-link' );
+
+				var manageSuggestionsLink = document.createElement( 'a' );
+				manageSuggestionsLink.classList.add( 'marketplace-suggestion-manage-link', 'linkout' );
+				manageSuggestionsLink.setAttribute(
+					'href',
+					marketplace_suggestions.manage_suggestions_url
+				);
+				manageSuggestionsLink.textContent =  marketplace_suggestions.i18n_marketplace_suggestions_manage_suggestions;
+
+				container.appendChild( manageSuggestionsLink );
 			}
 
 			return container;
@@ -206,7 +226,7 @@
 				container.appendChild( icon );
 			}
 			container.appendChild(
-				renderSuggestionContent( title, copy )
+				renderSuggestionContent( slug, title, copy )
 			);
 			container.appendChild(
 				renderSuggestionCTA( context, product, promoted, slug, url, linkText, linkIsButton, allowDismiss )
@@ -292,6 +312,26 @@
 			}
 		}
 
+		function addManageSuggestionsTracksHandler() {
+			$( 'a.marketplace-suggestion-manage-link' ).on( 'click', function() {
+				window.wcTracks.recordEvent( 'marketplace_suggestions_manage_clicked' );
+			} );
+		}
+
+		function isContextHiddenOnPageLoad( context ) {
+			// Some suggestions are not visible on page load;
+			// e.g. the user reveals them by selecting a tab.
+			var revealableSuggestionsContexts = [
+				'product-edit-meta-tab-header',
+				'product-edit-meta-tab-body',
+				'product-edit-meta-tab-footer'
+			];
+			return _.includes( revealableSuggestionsContexts, context );
+		}
+
+		// track the current product data tab to avoid over-tracking suggestions
+		var currentTab = false;
+
 		// Render suggestion data in appropriate places in UI.
 		function displaySuggestions( marketplaceSuggestionsApiData ) {
 			var usedSuggestionsContexts = [];
@@ -340,14 +380,41 @@
 					$( this ).addClass( 'showing-suggestion' );
 					usedSuggestionsContexts.push( context );
 
-					window.wcTracks.recordEvent( 'marketplace_suggestion_displayed', {
-						suggestion_slug: suggestionsToDisplay[ i ].slug,
-						context: context,
-						product: suggestionsToDisplay[ i ].product || '',
-						promoted: suggestionsToDisplay[ i ].promoted || '',
-						target: suggestionsToDisplay[ i ].url || ''
-					} );
+					if ( ! isContextHiddenOnPageLoad( context ) ) {
+						// Fire 'displayed' tracks events for immediately visible suggestions.
+						window.wcTracks.recordEvent( 'marketplace_suggestion_displayed', {
+							suggestion_slug: suggestionsToDisplay[ i ].slug,
+							context: context,
+							product: suggestionsToDisplay[ i ].product || '',
+							promoted: suggestionsToDisplay[ i ].promoted || '',
+							target: suggestionsToDisplay[ i ].url || ''
+						} );
+					}
 				}
+
+				// Track when suggestions are displayed (and not already visible).
+				$( 'ul.product_data_tabs li.marketplace-suggestions_options a' ).click( function( e ) {
+					e.preventDefault();
+
+					if ( '#marketplace_suggestions' === currentTab ) {
+						return;
+					}
+
+					if ( ! isContextHiddenOnPageLoad( context ) ) {
+						// We've already fired 'displayed' event above.
+						return;
+					}
+
+					for ( var i in suggestionsToDisplay ) {
+						window.wcTracks.recordEvent( 'marketplace_suggestion_displayed', {
+							suggestion_slug: suggestionsToDisplay[ i ].slug,
+							context: context,
+							product: suggestionsToDisplay[ i ].product || '',
+							promoted: suggestionsToDisplay[ i ].promoted || '',
+							target: suggestionsToDisplay[ i ].url || ''
+						} );
+					}
+				} );
 			} );
 
 			hidePageElementsForSuggestionState( usedSuggestionsContexts );
@@ -356,7 +423,15 @@
 
 		if ( marketplace_suggestions.suggestions_data ) {
 			displaySuggestions( marketplace_suggestions.suggestions_data );
+
+			// track the current product data tab to avoid over-reporting suggestion views
+			$( 'ul.product_data_tabs' ).on( 'click', 'li a', function( e ) {
+				e.preventDefault();
+				currentTab = $( this ).attr( 'href' );
+			} );
 		}
+
+		addManageSuggestionsTracksHandler();
 	});
 
 })( jQuery, marketplace_suggestions, ajaxurl );
